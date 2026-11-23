@@ -927,55 +927,57 @@ async function synthesizeSpeech(text: string, language = 'te') {
       apiKey: geminiKey,
       apiVersion: 'v1beta',
       httpOptions: {
-        timeout: 18000,
+        timeout: 16000,
         headers: {
           'User-Agent': 'aistudio-build',
         },
       },
     });
 
-    const ttsAttempts: Array<{ model: string; voice: string; withMetadata: boolean }> = [
-      { model: 'gemini-3.8-flash-tts', voice: 'Kore', withMetadata: true },
-      { model: 'gemini-3.8-flash-lite-tts', voice: 'Zephyr', withMetadata: true },
-      { model: 'gemini-3.8-flash-lite-tts', voice: 'Kore', withMetadata: false },
+    const ttsAttempts: Array<{ model: string; voice: string; withMetadata: boolean; backoffMs: number }> = [
+      { model: 'gemini-3.8-flash-lite-tts', voice: 'Kore', withMetadata: true, backoffMs: 0 },
+      { model: 'gemini-3.8-flash-lite-tts', voice: 'Kore', withMetadata: true, backoffMs: 700 },
+      { model: 'gemini-3.8-flash-tts', voice: 'Kore', withMetadata: true, backoffMs: 300 },
+      { model: 'gemini-3.8-flash-lite-tts', voice: 'Zephyr', withMetadata: false, backoffMs: 300 },
     ];
 
     for (const attempt of ttsAttempts) {
       if (isModelInCooldown(attempt.model) && attempt.model !== 'gemini-3.8-flash-lite-tts') {
         continue;
       }
+      if (attempt.backoffMs > 0) {
+        await new Promise((r) => setTimeout(r, attempt.backoffMs));
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 14000);
       try {
         const part = attempt.withMetadata
           ? {
               text: cleanText,
               speechMetadata: {
-                style: 'Warm, empathetic, expressive human conversational voice with natural breathing, gentle warmth, and clear pronunciation',
+                style: 'Warm, empathetic, natural human conversational voice with gentle warmth and clear pronunciation',
               },
             }
           : { text: cleanText };
 
-        const ttsResponse = await Promise.race([
-          ai.models.generateContent({
-            model: attempt.model,
-            contents: [
-              {
-                role: 'user',
-                parts: [part],
-              },
-            ],
-            config: {
-              responseModalities: ['AUDIO'],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: attempt.voice },
-                },
+        const ttsResponse = await ai.models.generateContent({
+          model: attempt.model,
+          contents: [
+            {
+              role: 'user',
+              parts: [part],
+            },
+          ],
+          config: {
+            abortSignal: controller.signal,
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: attempt.voice },
               },
             },
-          }),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('TTS timeout')), 15000)
-          ),
-        ]);
+          },
+        });
 
         const base64Audio =
           ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
@@ -994,6 +996,8 @@ async function synthesizeSpeech(text: string, language = 'te') {
         if (attempt.model !== 'gemini-3.8-flash-lite-tts') {
           markModelCooldown(attempt.model);
         }
+      } finally {
+        clearTimeout(timer);
       }
     }
   }

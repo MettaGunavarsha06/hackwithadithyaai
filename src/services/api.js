@@ -89,7 +89,7 @@ export async function synthesizeSpeechAudio({ text, language = 'te' }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, language }),
       },
-      18000
+      30000
     );
     if (res.ok) {
       return await res.json();
